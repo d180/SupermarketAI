@@ -2,10 +2,10 @@ name: Build & Push Docker (Docker Hub auto-version)
 
 on:
   push:
-    branches: [ "main" ]   # <-- change if your default branch is not 'main'
+    branches: [ "main" ]
 
 permissions:
-  contents: write          # needed to create & push git tags
+  contents: write          # to create & push git tags
 
 concurrency:
   group: docker-release
@@ -19,7 +19,7 @@ jobs:
       - name: Checkout (with tags)
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0    # we need tags to compute the next version
+          fetch-depth: 0
 
       - name: Derive next version tag
         run: |
@@ -28,33 +28,19 @@ jobs:
           [ -z "$latest" ] && latest=0
           echo "TAG=v$((latest+1))" >> $GITHUB_ENV
 
-          # force-lowercase username for Docker Hub path
           USER_LC=$(echo "${{ secrets.DOCKERHUB_USERNAME }}" | tr '[:upper:]' '[:lower:]')
-          # CHANGE 'supermarketai' below if your Docker Hub repo name differs
           echo "IMAGE=docker.io/$USER_LC/supermarketai" >> $GITHUB_ENV
 
-          echo "Next version: ${TAG}"
+          echo "Next version (candidate): ${TAG}"
 
-      - name: Create & push git tag
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          git tag "$TAG"
-          git push origin "$TAG"
-
-      # ---------- PRE-BUILD SANITY (outside Docker) ----------
+      # Optional: pre-build sanity (helps show clear errors)
       - name: Use Node.js 20
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
-
-      - name: Install deps (npm ci)
-        run: npm ci
-
-      - name: Build app (next build)
-        run: npm run build
-      # ---------- END PRE-BUILD SANITY ----------
+      - run: npm ci
+      - run: npm run build
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
@@ -68,7 +54,6 @@ jobs:
       - name: Build & push image
         uses: docker/build-push-action@v6
         with:
-          # If your Dockerfile is not at repo root, set context to that folder
           context: .
           push: true
           tags: |
@@ -77,3 +62,12 @@ jobs:
             ${{ env.IMAGE }}:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # ✅ Create git tag ONLY if everything above succeeded
+      - name: Create & push git tag (post-success)
+        if: ${{ success() }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git tag "$TAG"
+          git push origin "$TAG"
