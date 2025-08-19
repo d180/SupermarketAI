@@ -1,46 +1,39 @@
-import { dbConnect } from "@/lib/dbConnect";
+import { NextResponse } from 'next/server';
+import { dbConnect } from '@/lib/dbConnect';
 import User from '@/model/User';
 import Product from '@/model/Product';
-import Order from '@/model/Order';
-import OrderItem from '@/model/OrderItem';
-import Recommendation from '@/model/Recommendation';
+// Add these back later only if you actually create the files.
+// import Order from '@/model/Order';
+// import OrderItem from '@/model/OrderItem';
+// import Recommendation from '@/model/Recommendation';
 
-// Handle GET requests
-export async function GET(req, res) {
-    try {
-        // Establish MongoDB connection
-        await dbConnect();
+export async function GET() {
+  try {
+    await dbConnect();
 
-        // Ensure all models are created and indexes are initialized
-        await User.init();
-        await Product.init();
-        await Order.init();
-        await OrderItem.init();
-        await Recommendation.init();
+    // Initialize indexes for the models you actually have:
+    await Promise.all([
+      User.init(),
+      Product.init(),
+      // Order.init(),
+      // OrderItem.init(),
+      // Recommendation.init(),
+    ]);
 
-        res.status(200).json({ message: "Database connected and schemas created successfully!" });
-    } catch (error) {
-        console.error("Setup error:", error);
-        res.status(500).json({ error: "Failed to connect to database or create schemas." });
-    }
+    return NextResponse.json(
+      { message: 'Database connected and schemas created successfully!' },
+      { status: 200 }
+    );
+  } catch (error) {
+    console.error('Setup error:', error);
+    return NextResponse.json(
+      { error: 'Failed to connect to database or create schemas.' },
+      { status: 500 }
+    );
+  }
 }
 
-// Handle POST requests (you can modify it if needed)
-export async function POST(req, res) {
-    try {
-        // Handle the POST logic, if applicable.
-        // For now, it can perform the same function as GET or something else based on your need.
-        await dbConnect();
-
-        await User.init();
-        await Product.init();
-        await Order.init();
-        await OrderItem.init();
-        await Recommendation.init();
-
-        res.status(200).json({ message: "Database connected and schemas created successfully!" });
-    } catch (error) {
-        console.error("Setup error:", error);
-        res.status(500).json({ error: "Failed to connect to database or create schemas." });
-    }
+export async function POST() {
+  // Same behavior as GET for now
+  return GET();
 }
