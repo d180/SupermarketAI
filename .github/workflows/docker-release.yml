@@ -1,4 +1,4 @@
-name: Build & Push Docker (Docker Hub auto-version)
+name: Build & Push Docker (Docker Hub + ECR auto-version)
 
 on:
   push:
@@ -29,11 +29,24 @@ jobs:
           echo "TAG=v$((latest+1))" >> $GITHUB_ENV
 
           USER_LC=$(echo "${{ secrets.DOCKERHUB_USERNAME }}" | tr '[:upper:]' '[:lower:]')
-          echo "IMAGE=docker.io/$USER_LC/supermarketai" >> $GITHUB_ENV
+          echo "DH_IMAGE=docker.io/$USER_LC/supermarketai" >> $GITHUB_ENV
 
           echo "Next version (candidate): ${TAG}"
 
-      # Optional: pre-build sanity (helps show clear errors)
+      # ---------- AWS (ECR) auth ----------
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ secrets.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Login to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      # ------------------------------------
+
+      # Optional: pre-build sanity (outside Docker) to show clear Next.js errors
       - name: Use Node.js 20
         uses: actions/setup-node@v4
         with:
@@ -51,15 +64,18 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build & push image
+      - name: Build & push image (DockerHub + ECR)
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
           tags: |
-            ${{ env.IMAGE }}:${{ env.TAG }}
-            ${{ env.IMAGE }}:latest
-            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.DH_IMAGE }}:${{ env.TAG }}
+            ${{ env.DH_IMAGE }}:latest
+            ${{ env.DH_IMAGE }}:${{ github.sha }}
+            ${{ steps.ecr.outputs.registry }}/supermarketai:${{ env.TAG }}
+            ${{ steps.ecr.outputs.registry }}/supermarketai:latest
+            ${{ steps.ecr.outputs.registry }}/supermarketai:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
