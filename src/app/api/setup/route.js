@@ -1,5 +1,9 @@
 import { dbConnect } from "@/lib/dbConnect";
-import { User, Product, Order, OrderItem, Recommendation } from "@/model/User";
+import User from '@/model/User';
+import Product from '@/model/Product';
+import Order from '@/model/Order';
+import OrderItem from '@/model/OrderItem';
+import Recommendation from '@/model/Recommendation';
 
 // Handle GET requests
 export async function GET(req, res) {
