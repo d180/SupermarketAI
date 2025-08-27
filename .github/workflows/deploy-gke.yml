@@ -1,0 +1,98 @@
+name: Deploy to GKE (after successful image build)
+
+on:
+  workflow_run:
+    workflows: ["Build & Push Docker (Docker Hub + ECR auto-version)"]
+    types: [completed]
+
+jobs:
+  deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout (with tags)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Derive the latest git tag (vN) created by the build workflow on success
+      - name: Compute image tag from git tags
+        id: tag
+        run: |
+          LATEST_TAG="$(git tag -l 'v[0-9]*' | sort -V | tail -n1)"
+          if [ -z "$LATEST_TAG" ]; then
+            echo "No version tag found (vN). Did the build workflow run?"
+            exit 1
+          fi
+          echo "TAG=$LATEST_TAG" >> $GITHUB_ENV
+          echo "Using image tag: $LATEST_TAG"
+
+      # ---- Auth to GCP using the service account key (simple path) ----
+      - name: Google Auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ secrets.GKE_CLUSTER }}
+          location: ${{ secrets.GKE_LOCATION }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+      # Make sure kubectl is available
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+
+      # Create/update Secret from GH secrets (never commit real secret files)
+      - name: Create/Update app secret
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+        run: |
+          kubectl -n supermarket create secret generic app-secrets \
+            --from-literal=MONGODB_URI="$MONGODB_URI" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      # Apply base manifests (namespace, svc, ingress if present).
+      # Safe to re-apply; idempotent.
+      - name: Apply manifests (no image change)
+        run: |
+          # Create namespace if you track it in k8s/namespace.yaml
+          if [ -f k8s/namespace.yaml ]; then
+            kubectl apply -f k8s/namespace.yaml
+          else
+            kubectl get ns supermarket >/dev/null 2>&1 || kubectl create namespace supermarket
+          fi
+
+          # Apply svc/ingress (deployment image will be patched next)
+          [ -f k8s/service.yaml ] && kubectl apply -f k8s/service.yaml || true
+          [ -f k8s/ingress.yaml ] && kubectl apply -f k8s/ingress.yaml || true
+          [ -f k8s/hpa.yaml ] && kubectl apply -f k8s/hpa.yaml || true
+
+      # Update the Deployment to the new image tag from Docker Hub
+      - name: Patch Deployment image to new version
+        env:
+            TAG: ${{ env.TAG }}
+            DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+        run: |
+            IMAGE="docker.io/${DH_USER,,}/supermarketai:${TAG}"
+            echo "Setting image to $IMAGE"
+            kubectl -n supermarket set image deploy/web web="$IMAGE"
+            kubectl -n supermarket rollout status deploy/web --timeout=5m
+
+      - name: Stamp version annotation
+        env:
+            TAG: ${{ env.TAG }}
+        run: |
+            kubectl -n supermarket annotate deploy/web app.kubernetes.io/version="$TAG" --overwrite
+
+      # (Optional) show what image K8s thinks it has now
+      - name: Show current image
+        run: |
+          kubectl -n supermarket get deploy web -o=jsonpath='{.spec.template.spec.containers[0].image}'; echo
+
+      # Wait for rollout to complete (zero-downtime)
+      - name: Wait for rollout
+        run: |
+          kubectl -n supermarket rollout status deploy/web --timeout=5m
